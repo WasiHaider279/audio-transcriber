@@ -46,10 +46,32 @@ export class WhisperEngine extends TranscriptionEngine {
 
     const startTime = Date.now();
 
-    const result = await this.pipeline(audioPath, {
+    // In Node.js, AudioContext is missing so we load PCM audio samples using wavefile
+    const fs = await import('fs/promises');
+    const wavefileModule = await import('wavefile');
+    const WaveFile = wavefileModule.WaveFile || wavefileModule.default?.WaveFile || wavefileModule.default;
+
+    const buffer = await fs.readFile(audioPath);
+    const wav = new WaveFile(buffer);
+    wav.toBitDepth('32f'); // Convert PCM to Float32
+    wav.toSampleRate(16000); // Ensure 16kHz
+
+    let audioData = wav.getSamples();
+    if (Array.isArray(audioData)) {
+      if (audioData.length > 1) {
+        // Downmix multi-channel to mono
+        const SCALING_FACTOR = Math.sqrt(2);
+        for (let i = 0; i < audioData[0].length; ++i) {
+          audioData[0][i] = (audioData[0][i] + audioData[1][i]) / SCALING_FACTOR;
+        }
+      }
+      audioData = audioData[0];
+    }
+
+    const result = await this.pipeline(audioData, {
       return_timestamps: timestampMode === 'word' ? 'word' : true,
-      chunk_length_s: 30,      // Process in 30s chunks for long audio
-      stride_length_s: 5,      // 5s overlap between chunks for context
+      chunk_length_s: 30,
+      stride_length_s: 5,
     });
 
     const processingTime = ((Date.now() - startTime) / 1000).toFixed(2);
